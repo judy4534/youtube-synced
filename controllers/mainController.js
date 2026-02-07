@@ -44,7 +44,7 @@ const main_forgotPassword_get = (req, res) => {
  */
 
 const main_noAccess_get = (req, res) => {
-    render('noAccess', {title: 'No Access'});
+    res.render('noAccess', {title: 'No Access'});
 }
 
 /**
@@ -81,8 +81,9 @@ const main_checkURL_get = (req, res) => {
  */
 
 const main_checkRoom_get = (req, res) => {
-    const room = parseInt(req.query.room);
-    if (isNaN(room) || room.length < 5) {
+    const roomValue = (req.query.room || '').trim();
+    const room = parseInt(roomValue, 10);
+    if (!roomValue || roomValue.length < 5 || Number.isNaN(room)) {
         res.send(JSON.stringify('Not Valid'));
     } else {
         Room.findOne({room: room})
@@ -139,49 +140,59 @@ const main_watch_post = (req, res) => {
 /**
  * Authorizes a user login
  */
-const main_authorize_post = (req, res) => {
-    let auth = false;
-    User.findOne({email: req.body.email})
-    .then( userInfo => {
-        if (userInfo) {
-            bcrypt.compare(res.body.password, userInfo.body.password, (err, valid) => {
-                if (valid) {
-                    req.session.user = userInfo;
-                    res.render('index', {title: 'Home'});
-                    auth = true;
-                }
-            });
+const main_authorize_post = async (req, res) => {
+    try {
+        const userInfo = await User.findOne({email: req.body.email});
+        if (!userInfo) {
+            return res.redirect('login?inValid=true');
         }
-    });
 
-    if (!auth) {
-        res.redirect('login?inValid=true');
+        const valid = await bcrypt.compare(req.body.password, userInfo.password);
+        if (!valid) {
+            return res.redirect('login?inValid=true');
+        }
+
+        req.session.user = userInfo;
+        return res.render('index', {title: 'Home'});
+    } catch (err) {
+        return res.redirect('login?inValid=true');
     }
 }
 
 /**
  * Handles registering a user
  */
-const main_signUp_post = (req, res) => {
-    errors = [];
-    User.findOne({email: req.body.email})
-    .then( result => {
-        if (result) {
-            errors.push(errorList['emailUsed']);
-        } else {
-            if (res.body.password.length < 8) {
-                errors.push(errorList['passLength']);
-            }
-            if (res.body.password !== req.body.repeatPass) {
-                errors.push(errorList['noMatch']);
-            }
+const main_signUp_post = async (req, res) => {
+    const errors = [];
+    try {
+        const existingUser = await User.findOne({email: req.body.email});
+        if (existingUser) {
+            errors.push('Email is already in use.');
         }
-    });
 
-    if (errors.length > 0) {
-        res.redirect('sign-up', {title: 'My Account', errors});
+        if (!req.body.password || req.body.password.length < 8) {
+            errors.push('Password must be at least 8 characters.');
+        }
+        if (req.body.password !== req.body.repeatPass) {
+            errors.push('Passwords do not match.');
+        }
+
+        if (errors.length > 0) {
+            return res.render('sign-up', {title: 'Sign Up', errors});
+        }
+
+        const hashedPassword = await bcrypt.hash(req.body.password, 10);
+        const user = new User({
+            username: req.body.username,
+            email: req.body.email,
+            password: hashedPassword
+        });
+        const savedUser = await user.save();
+        req.session.user = savedUser;
+        return res.redirect('account');
+    } catch (err) {
+        return res.render('sign-up', {title: 'Sign Up', errors: ['Unable to create account.']});
     }
-    res.redirect('account', {title: 'My Account'});
 }
 
 module.exports = {
